@@ -1,0 +1,64 @@
+[package]
+name = "shamsu"
+version = "0.1.0"
+edition = "2021"
+description = "Shamsu — Offline-first AI developer assistant"
+authors = ["Shamsu Contributors"]
+
+[[bin]]
+name = "shamsu"
+path = "src/main.rs"
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Async runtime
+tokio = { version = "1.38", features = ["full"] }
+
+# HTTP client for llama.cpp server
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# SQLite
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# UUID for session IDs
+uuid = { version = "1.8", features = ["v4"] }
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Colored terminal output
+colored = "2.1"
+
+# Spinner / progress
+indicatif = "0.17"
+
+# Readline-like input
+rustyline = "14.0"
+
+# Directories (home dir, config dir)
+dirs = "5.0"
+
+# Regex for workspace detection
+regex = "1.10"
+
+# Anyhow for error handling
+anyhow = "1.0"
+
+# Streaming SSE / line-by-line reading
+futures-util = "0.3"
+
+# Crossterm for terminal control
+crossterm = "0.27"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

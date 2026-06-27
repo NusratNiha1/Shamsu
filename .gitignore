@@ -1,0 +1,57 @@
+# ── Rust build artifacts ──────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock         # only ignore at workspace root if this is a library; keep for binaries
+
+# ── llama.cpp runtime ─────────────────────────────────────────────────────────
+# Binaries and DLLs — too large for git, downloaded separately
+llama.cpp/*.exe
+llama.cpp/*.dll
+llama.cpp/lib/
+llama.cpp/build/
+
+# ── Model weights ─────────────────────────────────────────────────────────────
+# GGUF model files are multi-GB — never commit these
+*.gguf
+*.ggml
+*.bin
+*.safetensors
+models/
+
+# ── Shamsu runtime data ───────────────────────────────────────────────────────
+# Local user data stored in ~/.shamsu — nothing here to ignore,
+# but if someone runs shamsu from the repo dir:
+shamsu.db
+*.db-shm
+*.db-wal
+
+# ── OS noise ──────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/*.log
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# ── Windows executables in root (llama.cpp release zip contents) ──────────────
+/*.exe
+/*.dll
+
+# ── Logs and temp ─────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.temp

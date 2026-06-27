@@ -1,0 +1,5 @@
+# Ignore all llama.cpp runtime binaries and libraries.
+# Download these from: https://github.com/ggerganov/llama.cpp/releases
+*
+!.gitignore
+!README.md

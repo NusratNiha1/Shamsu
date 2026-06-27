@@ -31,9 +31,6 @@ For a 4B parameter model that runs well on 8GB RAM:
 | Model | Size (Q4) | Context | Strengths |
 |---|---|---|---|
 | **Qwen2.5-Coder-7B-Instruct (Q4)** | ~4.5GB | 128K tokens | Best-in-class for coding at small scale |
-| **Phi-4-mini (3.8B)** | ~2.5GB | 16K tokens | Fast, excellent reasoning |
-| **Llama-3.2-3B-Instruct (Q4)** | ~2GB | 8K tokens | Reliable, broad task coverage |
-| **DeepSeek-Coder-V2-Lite (Q4)** | ~5GB | 128K tokens | Strong code generation |
 
 **Recommendation: Qwen2.5-Coder-7B-Instruct (Q4_K_M)** — best coding performance in the 4–7B range, fits in 8GB RAM with room for the OS, and supports a 128K token context natively.
 
