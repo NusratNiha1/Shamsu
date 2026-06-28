@@ -184,7 +184,6 @@ async fn run_turn(
 
     // ── Step 1: handle explicit tool_call blocks (model did the right thing) ──
     let tool_calls = mcp::extract_all_tool_calls(&response);
-    let mut did_something = !tool_calls.is_empty();
 
     if !tool_calls.is_empty() {
         println!();
@@ -199,17 +198,11 @@ async fn run_turn(
     }
 
     // ── Step 2: extract code blocks and shell commands from plain markdown ──
-    // This runs regardless — catches everything the model wrote in normal fences.
     let extracted = extractor::extract(&response);
 
-    if !extracted.files.is_empty() || !extracted.shell.is_empty() {
-        did_something = true;
-        println!();
-    }
-
     // Write files
+    let mut written_files: Vec<String> = Vec::new();
     for file in &extracted.files {
-        // Skip files already handled by a tool_call write_file for the same path
         let already_written = tool_calls.iter().any(|(name, args)| {
             name == "write_file" && args["path"].as_str() == Some(&file.path)
         });
@@ -220,6 +213,7 @@ async fn run_turn(
             "content": file.content
         });
         let result = mcp::call_tool("write_file", &args, permissions, auto_yes).await;
+        if result.success { written_files.push(file.path.clone()); }
         storage::append_message(&Message::new(
             session_id,
             "tool",
@@ -231,7 +225,7 @@ async fn run_turn(
     for shell_cmd in &extracted.shell {
         if permissions.can_execute_shell().is_err() {
             ui::print_warning(&format!(
-                "Shell command skipped (profile: {}). Use --profile full to enable: {}",
+                "Shell skipped (profile: {}). Use --profile full: {}",
                 permissions.profile.as_str(),
                 shell_cmd.command
             ));
@@ -246,9 +240,31 @@ async fn run_turn(
         ))?;
     }
 
-    if !did_something && extracted.files.is_empty() && extracted.shell.is_empty() {
-        // Pure text answer — nothing to write
+    // ── Summary / plain-text answer ───────────────────────────────────────
+    let total_written = written_files.len()
+        + tool_calls.iter().filter(|(n, _)| n == "write_file").count();
+
+    println!();
+    if total_written > 0 {
+        let names: Vec<String> = written_files.iter()
+            .chain(
+                tool_calls.iter()
+                    .filter(|(n, _)| n == "write_file")
+                    .filter_map(|(_, a)| a["path"].as_str().map(String::from))
+                    .collect::<Vec<_>>()
+                    .iter()
+            )
+            .cloned()
+            .collect();
+        ui::print_success(&format!("Done — {} file(s) written: {}", total_written, names.join(", ")));
+    } else if extracted.files.is_empty() && extracted.shell.is_empty() && tool_calls.is_empty() {
+        // Pure conversational answer — print the response text
+        println!("  {}", "◆ Shamsu".bright_cyan().bold());
+        for line in response.lines() {
+            println!("  {}", line);
+        }
     }
+    println!();
 
     let _ = context::maybe_compress(session_id, llm).await;
     Ok(())

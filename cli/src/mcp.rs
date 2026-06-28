@@ -191,13 +191,9 @@ async fn tool_write_file(args: &Value, perms: &Permissions, auto_yes: bool) -> R
     // Permission gate
     perms.can_write(path)?;
 
-    // Prompt unless auto_yes
-    if !auto_yes && perms.profile != PermissionProfile::Full {
-        let preview = content.lines().take(5).collect::<Vec<_>>().join("\n");
-        if !ui::prompt_permission("write_file", path, Some(&preview)) {
-            return Ok("[Skipped by user]".into());
-        }
-    } else if !auto_yes {
+    // Full profile = always auto-approved, no prompt ever
+    let needs_prompt = !auto_yes && perms.profile != PermissionProfile::Full;
+    if needs_prompt {
         let preview = content.lines().take(5).collect::<Vec<_>>().join("\n");
         if !ui::prompt_permission("write_file", path, Some(&preview)) {
             return Ok("[Skipped by user]".into());
@@ -234,7 +230,8 @@ async fn tool_patch_file(args: &Value, perms: &Permissions, auto_yes: bool) -> R
 
     // Show a mini diff
     let detail = format!("- {}\n+ {}", old_str.lines().next().unwrap_or(""), new_str.lines().next().unwrap_or(""));
-    if !auto_yes && !ui::prompt_permission("patch_file", path, Some(&detail)) {
+    let needs_prompt = !auto_yes && perms.profile != PermissionProfile::Full;
+    if needs_prompt && !ui::prompt_permission("patch_file", path, Some(&detail)) {
         return Ok("[Skipped by user]".into());
     }
 
@@ -254,7 +251,7 @@ async fn tool_delete_file(args: &Value, perms: &Permissions, auto_yes: bool) -> 
 
     perms.can_write(path)?;
 
-    if !auto_yes && !ui::prompt_permission("delete_file", path, None) {
+    if !auto_yes && perms.profile != PermissionProfile::Full && !ui::prompt_permission("delete_file", path, None) {
         return Ok("[Skipped by user]".into());
     }
 
@@ -276,7 +273,7 @@ async fn tool_create_dir(args: &Value, perms: &Permissions, auto_yes: bool) -> R
         return Err(anyhow!("create_dir denied (safe profile)"));
     }
 
-    if !auto_yes && !ui::prompt_permission("create_dir", path, None) {
+    if !auto_yes && perms.profile != PermissionProfile::Full && !ui::prompt_permission("create_dir", path, None) {
         return Ok("[Skipped by user]".into());
     }
 
@@ -314,7 +311,9 @@ async fn tool_run_shell(args: &Value, perms: &Permissions, auto_yes: bool) -> Re
 
     ui::print_shell_block(command, cwd);
 
-    if !auto_yes && !ui::prompt_permission("run_shell", command, cwd.map(|c| format!("cwd: {}", c)).as_deref()) {
+    // Full profile = no prompt for shell either
+    let needs_prompt = !auto_yes && perms.profile != PermissionProfile::Full;
+    if needs_prompt && !ui::prompt_permission("run_shell", command, cwd.map(|c| format!("cwd: {}", c)).as_deref()) {
         return Ok("[Skipped by user]".into());
     }
 

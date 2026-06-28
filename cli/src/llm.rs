@@ -106,26 +106,39 @@ impl LlmClient {
         };
 
         // ── Animated spinner ──────────────────────────────────────────────
-        // A background OS thread ticks the spinner every 80ms until the
-        // AtomicBool is set. We store the JoinHandle in an Option so we
-        // can take() it exactly once when stopping.
         let done_flag = Arc::new(AtomicBool::new(false));
         let done_clone = Arc::clone(&done_flag);
         let mut spinner: Option<std::thread::JoinHandle<()>> = Some(std::thread::spawn(move || {
+            let phases = [
+                ("🍳", "Cracking eggs…"),
+                ("🔥", "Heating things up…"),
+                ("✨", "Conjuring some magic…"),
+                ("🧙", "Casting spells on your code…"),
+                ("⚗️ ", "Brewing the solution…"),
+                ("🍵", "Steeping the logic…"),
+                ("🔮", "Gazing into the crystal ball…"),
+                ("🎨", "Painting pixels…"),
+                ("🧩", "Fitting the pieces…"),
+                ("🚀", "Preparing for launch…"),
+            ];
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let start = Instant::now();
-            let mut i = 0usize;
+            let mut tick = 0usize;
             while !done_clone.load(Ordering::Relaxed) {
                 let secs = start.elapsed().as_secs();
+                let phase_idx = (secs / 4) as usize % phases.len();
+                let (icon, msg) = phases[phase_idx];
+                let frame = frames[tick % frames.len()];
                 print!(
-                    "\r  {} {}  {}   ",
-                    frames[i % frames.len()].bright_cyan(),
-                    "Shamsu is thinking…".bright_cyan().bold(),
+                    "\r  {} {} {}  {}   ",
+                    frame.bright_cyan(),
+                    icon,
+                    msg.bright_magenta().bold(),
                     format!("{}s", secs).truecolor(90, 90, 110),
                 );
                 let _ = io::stdout().flush();
                 std::thread::sleep(Duration::from_millis(80));
-                i += 1;
+                tick += 1;
             }
         }));
 
@@ -163,10 +176,12 @@ impl LlmClient {
             return Err(anyhow!("LLM server error {}: {}", status, body));
         }
 
-        // ── Stream tokens ─────────────────────────────────────────────────
+        // ── Stream tokens silently ────────────────────────────────────────
+        // We collect the full response but don't print tokens — the cooking
+        // animation is already showing. File writes are shown after this returns.
         let mut stream = response.bytes_stream();
         let mut full = String::new();
-        let mut first_token = true;
+        let mut got_tokens = false;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -180,17 +195,7 @@ impl LlmClient {
                 if let Ok(parsed) = serde_json::from_str::<StreamChunk>(data) {
                     for choice in parsed.choices {
                         if let Some(content) = choice.delta.content {
-                            if first_token {
-                                stop_spinner!(spinner);
-                                println!("\n  {}", "◆ Shamsu".bright_cyan().bold());
-                                print!("  ");
-                                first_token = false;
-                            }
-                            for (i, seg) in content.split('\n').enumerate() {
-                                if i > 0 { print!("\n  "); }
-                                print!("{}", seg);
-                            }
-                            let _ = io::stdout().flush();
+                            got_tokens = true;
                             full.push_str(&content);
                         }
                         if choice.finish_reason.is_some() { break; }
@@ -199,12 +204,12 @@ impl LlmClient {
             }
         }
 
-        if first_token {
-            stop_spinner!(spinner);
+        stop_spinner!(spinner);
+
+        if !got_tokens {
             println!("  {}", "(no response)".dimmed());
-        } else {
-            println!("\n");
         }
+        // Response is returned to caller — caller decides what to print/do with it.
 
         Ok(full)
     }
