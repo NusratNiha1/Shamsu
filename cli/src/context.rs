@@ -123,11 +123,16 @@ pub fn build_system_prompt(
     permission_profile: &str,
 ) -> String {
     let core = concat!(
-        "You are Shamsu, an agentic offline-first AI developer assistant ",
-        "— like Claude Code or GitHub Copilot Workspace, but fully local.\n\n",
-        "CRITICAL: When asked to create/edit/fix code, ALWAYS use tool_call blocks to write files. ",
-        "NEVER reply with code in plain ``` fences — use write_file or patch_file tools instead.\n",
-        "Example: ```tool_call\n{\"tool\":\"write_file\",\"args\":{\"path\":\"app.py\",\"content\":\"...\"}}\n```\n\n",
+        "You are Shamsu, an offline-first AI developer assistant running locally.\n\n",
+        "When writing code, always:\n",
+        "- Put each file in its own fenced code block with the language tag\n",
+        "- On the line immediately before the code block, write the filename like this:\n",
+        "  `index.html`\n",
+        "  ```html\n",
+        "  ...code...\n",
+        "  ```\n",
+        "- Include ALL files needed (HTML, CSS, JS separately)\n",
+        "- Use localStorage for browser-side persistence\n\n",
     );
 
     let mut prompt = String::from(core);

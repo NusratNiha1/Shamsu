@@ -15,6 +15,7 @@ use colored::Colorize;
 use rustyline::{DefaultEditor, error::ReadlineError};
 
 use crate::context;
+use crate::extractor;
 use crate::llm::LlmClient;
 use crate::mcp;
 use crate::permissions::Permissions;
@@ -23,7 +24,7 @@ use crate::storage::{self, Message, Session};
 use crate::ui;
 use crate::workspace;
 
-const MAX_TOOL_ITERATIONS: usize = 12;
+const MAX_TOOL_ITERATIONS: usize = 12; // kept for slash-command loop guard
 
 #[derive(Args)]
 pub struct ChatArgs {
@@ -83,14 +84,9 @@ pub async fn run(args: ChatArgs, workspace_path: &str, auto_yes: bool, verbose: 
     );
 
     // ── 6. System prompt ──────────────────────────────────────────────────
-    let tools = mcp::builtin_tool_defs();
     let skills_prompt = skills::build_skills_prompt(&session.active_skills);
     let ws_ctx = workspace::context_description(&ws_info);
-    let system = format!(
-        "{}{}",
-        context::build_system_prompt(&ws_ctx, &skills_prompt, profile_str),
-        mcp::tools_system_prompt(&tools),
-    );
+    let system = context::build_system_prompt(&ws_ctx, &skills_prompt, profile_str);
 
     // ── 7. Single-message mode ────────────────────────────────────────────
     if let Some(msg) = args.message {
@@ -168,86 +164,93 @@ async fn run_turn(
     let use_stream = crate::storage::get_config("stream")?
         .map(|v| v != "false").unwrap_or(true);
 
-    let mut iteration = 0;
+    let messages = context::build_messages(session_id, system).await?;
 
-    loop {
-        if iteration >= MAX_TOOL_ITERATIONS {
-            ui::print_warning(&format!("Reached tool-call limit ({MAX_TOOL_ITERATIONS})."));
-            break;
-        }
+    if verbose {
+        ui::print_info(&format!("{} messages in context", messages.len()));
+    }
 
-        let messages = context::build_messages(session_id, system).await?;
+    // ── Call LLM ──────────────────────────────────────────────────────────
+    let response = if use_stream {
+        llm.chat_stream(messages, temperature, max_tokens).await?
+    } else {
+        let r = llm.chat(messages, temperature, max_tokens).await?;
+        println!("\n  {} {}\n", "◆ Shamsu".bright_cyan().bold(), r);
+        r
+    };
 
-        if verbose {
-            ui::print_info(&format!("{} messages in context", messages.len()));
-        }
+    // Store the assistant message
+    storage::append_message(&Message::new(session_id, "assistant", &response))?;
 
-        // Call LLM
-        let response = if use_stream {
-            llm.chat_stream(messages, temperature, max_tokens).await?
-        } else {
-            let r = llm.chat(messages, temperature, max_tokens).await?;
-            println!("\n  {} {}\n", "◆ Shamsu".bright_cyan().bold(), r);
-            r
-        };
+    // ── Step 1: handle explicit tool_call blocks (model did the right thing) ──
+    let tool_calls = mcp::extract_all_tool_calls(&response);
+    let mut did_something = !tool_calls.is_empty();
 
-        // Extract ALL tool calls
-        let tool_calls = mcp::extract_all_tool_calls(&response);
-
-        if tool_calls.is_empty() {
-            // No explicit tool_call blocks — try the fallback extractor.
-            // This handles the case where the model wrote code in plain ``` fences
-            // with a filename hint above them.
-            let fallback_calls = mcp::extract_fallback_writes(&response);
-
-            if !fallback_calls.is_empty() {
-                // Announce that we're intercepting bare code blocks
-                ui::print_info("Detected code in plain fences — writing files automatically…");
-                println!();
-
-                // Store assistant turn (so context has the raw LLM output)
-                storage::append_message(&Message::new(session_id, "assistant", &response))?;
-
-                for (tool_name, tool_args) in &fallback_calls {
-                    let result = mcp::call_tool(tool_name, tool_args, permissions, auto_yes).await;
-                    storage::append_message(&Message::new(
-                        session_id,
-                        "tool",
-                        &format!("Tool `{}` result:\n{}", result.tool_name, result.output),
-                    ))?;
-                }
-
-                iteration += 1;
-                // Continue loop so LLM can acknowledge the writes
-                continue;
-            }
-
-            // Truly no tool calls — this is the final answer
-            storage::append_message(&Message::new(session_id, "assistant", &response))?;
-            let _ = context::maybe_compress(session_id, llm).await;
-            break;
-        }
-
-        // Store assistant turn (contains tool call blocks)
-        storage::append_message(&Message::new(session_id, "assistant", &response))?;
-
-        // Execute each tool call
+    if !tool_calls.is_empty() {
         println!();
         for (tool_name, tool_args) in &tool_calls {
             let result = mcp::call_tool(tool_name, tool_args, permissions, auto_yes).await;
-
-            // Feed result back as tool message
             storage::append_message(&Message::new(
                 session_id,
                 "tool",
                 &format!("Tool `{}` result:\n{}", result.tool_name, result.output),
             ))?;
         }
-
-        iteration += 1;
-        // Loop: LLM sees tool results and continues
     }
 
+    // ── Step 2: extract code blocks and shell commands from plain markdown ──
+    // This runs regardless — catches everything the model wrote in normal fences.
+    let extracted = extractor::extract(&response);
+
+    if !extracted.files.is_empty() || !extracted.shell.is_empty() {
+        did_something = true;
+        println!();
+    }
+
+    // Write files
+    for file in &extracted.files {
+        // Skip files already handled by a tool_call write_file for the same path
+        let already_written = tool_calls.iter().any(|(name, args)| {
+            name == "write_file" && args["path"].as_str() == Some(&file.path)
+        });
+        if already_written { continue; }
+
+        let args = serde_json::json!({
+            "path": file.path,
+            "content": file.content
+        });
+        let result = mcp::call_tool("write_file", &args, permissions, auto_yes).await;
+        storage::append_message(&Message::new(
+            session_id,
+            "tool",
+            &format!("Tool `write_file` result:\n{}", result.output),
+        ))?;
+    }
+
+    // Execute shell commands (only if profile allows)
+    for shell_cmd in &extracted.shell {
+        if permissions.can_execute_shell().is_err() {
+            ui::print_warning(&format!(
+                "Shell command skipped (profile: {}). Use --profile full to enable: {}",
+                permissions.profile.as_str(),
+                shell_cmd.command
+            ));
+            continue;
+        }
+        let args = serde_json::json!({ "command": shell_cmd.command });
+        let result = mcp::call_tool("run_shell", &args, permissions, auto_yes).await;
+        storage::append_message(&Message::new(
+            session_id,
+            "tool",
+            &format!("Tool `run_shell` result:\n{}", result.output),
+        ))?;
+    }
+
+    if !did_something && extracted.files.is_empty() && extracted.shell.is_empty() {
+        // Pure text answer — nothing to write
+    }
+
+    let _ = context::maybe_compress(session_id, llm).await;
     Ok(())
 }
 

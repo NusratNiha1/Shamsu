@@ -1,5 +1,6 @@
 mod commands;
 mod context;
+mod extractor;
 mod llm;
 mod mcp;
 mod permissions;
