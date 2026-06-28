@@ -4,7 +4,8 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
-use std::time::Duration;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::time::{Duration, Instant};
 
 const DEFAULT_LLM_URL: &str = "http://127.0.0.1:8080";
 
@@ -87,7 +88,7 @@ impl LlmClient {
         Ok(resp.data.into_iter().next().map(|m| m.id).unwrap_or_else(|| "unknown".into()))
     }
 
-    /// Stream response to stdout with a thinking indicator.
+    /// Stream response to stdout with an animated thinking spinner.
     /// Returns the full response text.
     pub async fn chat_stream(
         &self,
@@ -104,23 +105,65 @@ impl LlmClient {
             stop: vec!["<|endoftext|>".into(), "</s>".into()],
         };
 
-        // Thinking indicator
-        print!("\n  {} ", "◆ Shamsu".bright_cyan().bold());
-        let _ = io::stdout().flush();
+        // ── Animated spinner ──────────────────────────────────────────────
+        // A background OS thread ticks the spinner every 80ms until the
+        // AtomicBool is set. We store the JoinHandle in an Option so we
+        // can take() it exactly once when stopping.
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let done_clone = Arc::clone(&done_flag);
+        let mut spinner: Option<std::thread::JoinHandle<()>> = Some(std::thread::spawn(move || {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let start = Instant::now();
+            let mut i = 0usize;
+            while !done_clone.load(Ordering::Relaxed) {
+                let secs = start.elapsed().as_secs();
+                print!(
+                    "\r  {} {}  {}   ",
+                    frames[i % frames.len()].bright_cyan(),
+                    "Shamsu is thinking…".bright_cyan().bold(),
+                    format!("{}s", secs).truecolor(90, 90, 110),
+                );
+                let _ = io::stdout().flush();
+                std::thread::sleep(Duration::from_millis(80));
+                i += 1;
+            }
+        }));
 
-        let response = self.client
+        // Inline helper: signal done and join the thread, then clear line.
+        macro_rules! stop_spinner {
+            ($sp:expr) => {{
+                done_flag.store(true, Ordering::Relaxed);
+                if let Some(h) = $sp.take() { let _ = h.join(); }
+                print!("\r{}\r", " ".repeat(78));
+                let _ = io::stdout().flush();
+            }};
+        }
+
+        // ── HTTP request ──────────────────────────────────────────────────
+        let response = match self.client
             .post(format!("{}/v1/chat/completions", self.base_url))
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow!("Cannot reach llama.cpp server at {}.\nError: {}", self.base_url, e))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                stop_spinner!(spinner);
+                return Err(anyhow!(
+                    "Cannot reach llama.cpp server at {}.\nError: {}",
+                    self.base_url, e
+                ));
+            }
+        };
 
         if !response.status().is_success() {
+            stop_spinner!(spinner);
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(anyhow!("LLM server error {}: {}", status, body));
         }
 
+        // ── Stream tokens ─────────────────────────────────────────────────
         let mut stream = response.bytes_stream();
         let mut full = String::new();
         let mut first_token = true;
@@ -138,12 +181,11 @@ impl LlmClient {
                     for choice in parsed.choices {
                         if let Some(content) = choice.delta.content {
                             if first_token {
-                                // Print newline after the "◆ Shamsu" prefix
-                                println!();
+                                stop_spinner!(spinner);
+                                println!("\n  {}", "◆ Shamsu".bright_cyan().bold());
                                 print!("  ");
                                 first_token = false;
                             }
-                            // Render content — reindent multi-line output
                             for (i, seg) in content.split('\n').enumerate() {
                                 if i > 0 { print!("\n  "); }
                                 print!("{}", seg);
@@ -158,8 +200,8 @@ impl LlmClient {
         }
 
         if first_token {
-            // No tokens received
-            println!("{}", "(no response)".dimmed());
+            stop_spinner!(spinner);
+            println!("  {}", "(no response)".dimmed());
         } else {
             println!("\n");
         }

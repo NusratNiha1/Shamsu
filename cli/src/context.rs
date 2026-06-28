@@ -122,19 +122,15 @@ pub fn build_system_prompt(
     skills_prompt: &str,
     permission_profile: &str,
 ) -> String {
-    let mut prompt = String::from(
-        "You are Shamsu, an offline-first agentic AI developer assistant — \
-         similar to Claude Code or GitHub Copilot Workspace, but fully local. \
-         No data leaves the device.\n\n\
-         CORE BEHAVIOUR:\n\
-         - When asked to create, edit, refactor, delete or run things, DO IT using tools.\n\
-         - Never just show code in a markdown block and stop. Always use write_file or patch_file to actually write it.\n\
-         - Read files before editing them (use read_file first).\n\
-         - For new projects: create the directory structure, then write each file.\n\
-         - For edits: read the file, then use patch_file for targeted changes or write_file for full rewrites.\n\
-         - After all tool calls complete, write a short summary of what you did.\n\
-         - Be concise. No lengthy preambles. Get to work.\n\n",
+    let core = concat!(
+        "You are Shamsu, an agentic offline-first AI developer assistant ",
+        "— like Claude Code or GitHub Copilot Workspace, but fully local.\n\n",
+        "CRITICAL: When asked to create/edit/fix code, ALWAYS use tool_call blocks to write files. ",
+        "NEVER reply with code in plain ``` fences — use write_file or patch_file tools instead.\n",
+        "Example: ```tool_call\n{\"tool\":\"write_file\",\"args\":{\"path\":\"app.py\",\"content\":\"...\"}}\n```\n\n",
     );
+
+    let mut prompt = String::from(core);
 
     prompt.push_str(&format!("## Workspace\n{}\n\n", workspace_context));
 

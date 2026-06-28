@@ -195,7 +195,34 @@ async fn run_turn(
         let tool_calls = mcp::extract_all_tool_calls(&response);
 
         if tool_calls.is_empty() {
-            // Final answer — no more tool calls
+            // No explicit tool_call blocks — try the fallback extractor.
+            // This handles the case where the model wrote code in plain ``` fences
+            // with a filename hint above them.
+            let fallback_calls = mcp::extract_fallback_writes(&response);
+
+            if !fallback_calls.is_empty() {
+                // Announce that we're intercepting bare code blocks
+                ui::print_info("Detected code in plain fences — writing files automatically…");
+                println!();
+
+                // Store assistant turn (so context has the raw LLM output)
+                storage::append_message(&Message::new(session_id, "assistant", &response))?;
+
+                for (tool_name, tool_args) in &fallback_calls {
+                    let result = mcp::call_tool(tool_name, tool_args, permissions, auto_yes).await;
+                    storage::append_message(&Message::new(
+                        session_id,
+                        "tool",
+                        &format!("Tool `{}` result:\n{}", result.tool_name, result.output),
+                    ))?;
+                }
+
+                iteration += 1;
+                // Continue loop so LLM can acknowledge the writes
+                continue;
+            }
+
+            // Truly no tool calls — this is the final answer
             storage::append_message(&Message::new(session_id, "assistant", &response))?;
             let _ = context::maybe_compress(session_id, llm).await;
             break;

@@ -409,23 +409,27 @@ fn search_recursive(
 
 pub fn tools_system_prompt(tools: &[ToolDef]) -> String {
     let mut out = String::from(
-        "\n\n## Agentic Tool Use\n\
-You are an agentic coding assistant. When the user asks you to create, edit, \
-delete, or run things, USE THE TOOLS — do not just show code in markdown. \
-Always use tools to make actual changes.\n\
+        "\n\n## Tool Use — MANDATORY FORMAT\n\
 \n\
-Emit tool calls using this exact JSON format inside a fenced block:\n\
+Every time you need to create, edit, or delete a file you MUST emit a tool_call block.\n\
+NEVER put code inside a plain markdown fence (```python, ```rust, etc.) — that only \n\
+shows code to the user without writing it anywhere. USE TOOLS INSTEAD.\n\
+\n\
+### Exact format (copy this exactly):\n\
+\n\
 ```tool_call\n\
-{\"tool\": \"<name>\", \"args\": {<arguments>}}\n\
+{\"tool\": \"write_file\", \"args\": {\"path\": \"src/main.rs\", \"content\": \"fn main() {}\\n\"}}\n\
 ```\n\
 \n\
-You may emit multiple tool calls in sequence. Always read a file before editing it \
-unless you are creating it fresh. Use patch_file for small edits, write_file for \
-new files or full rewrites.\n\
+### Rules:\n\
+- One JSON object per ```tool_call``` block.\n\
+- You can emit MULTIPLE tool_call blocks back-to-back.\n\
+- Call read_file before editing an existing file.\n\
+- Call create_dir before writing files into a new folder.\n\
+- Escape all newlines as \\n inside the content string.\n\
+- After ALL tool calls are done, write a one-sentence summary.\n\
 \n\
-After all tool calls are done, summarise what you did in plain text.\n\
-\n\
-Available tools:\n",
+### Available tools:\n",
     );
     for t in tools {
         out.push_str(&format!("- **{}**: {}\n", t.name, t.description));
@@ -472,7 +476,193 @@ pub fn extract_all_tool_calls(response: &str) -> Vec<(String, Value)> {
     calls
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Fallback: extract bare code blocks and infer write_file calls ────────────
+
+/// When the LLM ignores tool_call format and writes code in plain fences, this
+/// function scans the response for patterns like:
+///   "// src/main.rs" or "**src/main.rs**" or "File: foo.py" immediately before
+///   a fenced code block, and converts them to (write_file, args) tuples.
+///
+/// Also handles explicit mentions like "create X.py" or "write to X.rs" before a fence.
+pub fn extract_fallback_writes(response: &str) -> Vec<(String, Value)> {
+    let mut calls = Vec::new();
+    let lines: Vec<&str> = response.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Detect an opening code fence (``` possibly followed by a language tag)
+        // Skip tool_call fences — those are handled by extract_all_tool_calls.
+        if trimmed.starts_with("```") && trimmed != "```tool_call" && !trimmed.starts_with("```tool_call") {
+            // Collect everything until the matching closing ```
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim() != "```" {
+                j += 1;
+            }
+            let code_lines = &lines[i + 1..j];
+
+            if !code_lines.is_empty() {
+                // Try to find a filename hint in the preceding context
+                if let Some(path) = find_path_hint(&lines, i) {
+                    let content = code_lines.join("\n") + "\n";
+                    calls.push((
+                        "write_file".to_string(),
+                        serde_json::json!({ "path": path, "content": content }),
+                    ));
+                }
+            }
+
+            // Advance past the closing fence
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    calls
+}
+
+/// Scan backward from `fence_line` (up to 6 lines) looking for a file path hint.
+/// Patterns detected:
+///   - `// path/to/file.ext`
+///   - `# path/to/file.ext`
+///   - `**path/to/file.ext**`
+///   - `File: path/to/file.ext`
+///   - `path/to/file.ext:` (bare path ending with colon)
+///   - `Create a file named \`foo.js\``
+///   - `named foo.html` / `named \`foo.html\``
+///   - `#### Step N: Create the CSS File` → infer from language tag on opening fence
+///   - plain mention of a filename with a known extension on its own line
+fn find_path_hint(lines: &[&str], fence_line: usize) -> Option<String> {
+    let known_exts = [
+        "rs", "py", "js", "ts", "jsx", "tsx", "go", "java", "c", "cpp", "h",
+        "hpp", "cs", "rb", "php", "swift", "kt", "md", "toml", "yaml", "yml",
+        "json", "html", "css", "scss", "sh", "bash", "zsh", "fish", "sql",
+        "txt", "env", "lock", "conf", "cfg", "ini", "xml",
+    ];
+
+    // Map common language tags to default filenames (last-resort fallback)
+    let lang_to_file = |lang: &str| -> Option<&'static str> {
+        match lang.to_lowercase().as_str() {
+            "html"       => Some("index.html"),
+            "css"        => Some("styles.css"),
+            "javascript" | "js" => Some("script.js"),
+            "typescript" | "ts" => Some("index.ts"),
+            "python" | "py"     => Some("main.py"),
+            "rust" | "rs"       => Some("main.rs"),
+            "json"       => Some("config.json"),
+            "toml"       => Some("Cargo.toml"),
+            "yaml" | "yml"      => Some("config.yaml"),
+            "bash" | "sh"       => Some("run.sh"),
+            _ => None,
+        }
+    };
+
+    // Helper: does a string look like a file path / name?
+    let looks_like_path = |s: &str| -> Option<String> {
+        let s = s.trim()
+            .trim_matches('*')
+            .trim_matches('`')
+            .trim_matches('\'')
+            .trim_matches('"')
+            .trim_end_matches(':')
+            .trim();
+        if s.is_empty() || s.contains(' ') && !s.contains('/') { return None; }
+        if s.contains('/') || s.contains('\\') {
+            let last = s.split(&['/', '\\'][..]).last().unwrap_or(s);
+            if last.contains('.') { return Some(s.to_string()); }
+        }
+        if let Some(dot) = s.rfind('.') {
+            let ext = &s[dot + 1..];
+            if known_exts.contains(&ext) { return Some(s.to_string()); }
+        }
+        None
+    };
+
+    let search_start = if fence_line >= 6 { fence_line - 6 } else { 0 };
+
+    // ── Pass 1: look for explicit filename in context lines ───────────────
+    for idx in (search_start..fence_line).rev() {
+        let raw = lines[idx].trim();
+        if raw.is_empty() { continue; }
+
+        // Skip markdown heading lines entirely for direct path matching —
+        // they contain descriptive text, not file paths.
+        let is_heading = raw.starts_with('#');
+
+        if !is_heading {
+            // Strip comment/annotation prefixes
+            let stripped = raw
+                .trim_start_matches("//")
+                .trim_start_matches("File:")
+                .trim_start_matches("file:")
+                .trim_start_matches("→")
+                .trim_start_matches("**")
+                .trim_end_matches("**")
+                .trim_end_matches(':')
+                .trim();
+            if let Some(p) = looks_like_path(stripped) {
+                return Some(p);
+            }
+        }
+
+        // Pattern: "named `foo.js`" or "named foo.js" or "file named `foo.js`"
+        let lower = raw.to_lowercase();
+        if let Some(pos) = lower.find("named ") {
+            let after = raw[pos + 6..].trim();
+            // grab first token
+            let token = after.split_whitespace().next().unwrap_or("").trim_matches('`').trim_matches('\'').trim_matches('"');
+            if let Some(p) = looks_like_path(token) {
+                return Some(p);
+            }
+        }
+
+        // Pattern: "create `foo.js`" / "write `foo.js`" / "save `foo.js`"
+        for verb in &["create `", "write `", "save `", "create a file `", "file `"] {
+            if let Some(pos) = lower.find(verb) {
+                let after = raw[pos + verb.len()..].trim_matches('`');
+                let token = after.split('`').next().unwrap_or(after);
+                if let Some(p) = looks_like_path(token) {
+                    return Some(p);
+                }
+            }
+        }
+
+        // Pattern: bare filename in backticks anywhere on the line: `styles.css`
+        let mut search = raw;
+        while let Some(start) = search.find('`') {
+            let rest = &search[start + 1..];
+            if let Some(end) = rest.find('`') {
+                let token = &rest[..end];
+                if let Some(p) = looks_like_path(token) {
+                    return Some(p);
+                }
+                search = &rest[end + 1..];
+            } else {
+                break;
+            }
+        }
+    }
+
+    // ── Pass 2: infer from the fence's language tag ───────────────────────
+    // e.g. ```html → index.html, ```css → styles.css, ```javascript → script.js
+    // Only use this if we found NO explicit filename above.
+    let fence_line_text = lines[fence_line].trim();
+    if fence_line_text.len() > 3 {
+        let lang = fence_line_text[3..].trim();
+        if let Some(default_name) = lang_to_file(lang) {
+            // Check if the heading above gives a better clue about the filename
+            // e.g. "Create the CSS File" → styles.css is fine
+            // But if heading says "Create the HTML File" and lang is css, trust lang
+            return Some(default_name.to_string());
+        }
+    }
+
+    None
+}
+
+
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
     args[key].as_str().ok_or_else(|| anyhow!("Missing required argument '{}'", key))
