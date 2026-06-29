@@ -1,0 +1,262 @@
+/* ============================================================
+   SHAMSU DESIGN SYSTEM — REUSABLE COMPONENTS
+   ============================================================ */
+
+/* ── Button ──────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 5px var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), opacity var(--t-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--text-inverse);
+}
+.btn--primary:hover:not(:disabled) { opacity: 0.85; }
+
+.btn--secondary {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.btn--secondary:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--border-strong); }
+
+.btn--ghost {
+  background: none;
+  color: var(--text-secondary);
+}
+.btn--ghost:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+
+.btn--danger {
+  background: color-mix(in srgb, var(--status-err) 15%, transparent);
+  color: var(--status-err);
+  border: 1px solid color-mix(in srgb, var(--status-err) 30%, transparent);
+}
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-err) 25%, transparent);
+}
+
+.btn--icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Input ───────────────────────────────────────────────── */
+.input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  width: 100%;
+  transition: border-color var(--t-fast);
+  user-select: text;
+}
+.input::placeholder { color: var(--text-muted); }
+.input:focus { border-color: var(--border-strong); }
+
+/* ── Badge ───────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  background: var(--bg-active);
+  color: var(--text-secondary);
+}
+.badge--ok      { background: color-mix(in srgb, var(--status-ok)   12%, transparent); color: var(--status-ok); }
+.badge--warn    { background: color-mix(in srgb, var(--status-warn)  12%, transparent); color: var(--status-warn); }
+.badge--err     { background: color-mix(in srgb, var(--status-err)   12%, transparent); color: var(--status-err); }
+.badge--info    { background: color-mix(in srgb, var(--status-info)  12%, transparent); color: var(--status-info); }
+
+/* ── Tooltip ─────────────────────────────────────────────── */
+[data-tooltip] { position: relative; }
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-selection);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+  z-index: 9999;
+}
+[data-tooltip]:hover::after { opacity: 1; }
+
+/* ── Tree item (file explorer) ───────────────────────────── */
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.tree-item--active { background: var(--bg-active); color: var(--text-primary); }
+.tree-item__icon { flex-shrink: 0; opacity: 0.7; font-size: 13px; }
+.tree-item__name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Session list item ───────────────────────────────────── */
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  transition: background var(--t-fast);
+  border-radius: 0;
+}
+.session-item:hover { background: var(--bg-hover); }
+.session-item--active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+.session-item__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.session-item--active .session-item__dot { background: var(--status-ok); }
+.session-item__name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.session-item__time { font-size: var(--text-xs); color: var(--text-muted); flex-shrink: 0; }
+
+/* ── Theme switcher ──────────────────────────────────────── */
+.theme-switcher {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  padding: 2px;
+  gap: 2px;
+}
+
+.theme-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.theme-option:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.theme-option--active { background: var(--bg-active); color: var(--text-primary); }
+
+.theme-preview {
+  width: 28px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.theme-preview--dark  { background: #000; }
+.theme-preview--light { background: #fff; border-color: #ccc; }
+.theme-preview--dimmed { background: #1a1a2e; }
+
+/* ── Divider ─────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-2) 0;
+}
+
+/* ── Empty state ─────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8);
+  color: var(--text-muted);
+  text-align: center;
+}
+.empty-state__icon { font-size: 32px; opacity: 0.4; }
+.empty-state__title { font-size: var(--text-md); color: var(--text-secondary); }
+.empty-state__hint  { font-size: var(--text-sm); }
+
+/* ── Loading spinner ─────────────────────────────────────── */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Context menu ────────────────────────────────────────── */
+.context-menu {
+  position: fixed;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  min-width: 160px;
+  box-shadow: var(--shadow-lg);
+  z-index: 9999;
+  animation: ctx-in 80ms ease;
+}
+@keyframes ctx-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.context-menu__item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.context-menu__item--danger:hover { background: color-mix(in srgb, var(--status-err) 15%, transparent); color: var(--status-err); }
+.context-menu__separator { height: 1px; background: var(--border); margin: var(--space-1) 0; }
