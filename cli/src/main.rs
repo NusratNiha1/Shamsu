@@ -42,6 +42,9 @@ enum Commands {
     /// Start an interactive chat session
     Chat(commands::chat::ChatArgs),
 
+    /// Build a web application from a prompt or requirements doc (Lovable/Bolt-style)
+    Build(commands::build::BuildArgs),
+
     /// Manage sessions (list, new, switch, delete, export)
     Session(commands::session::SessionArgs),
 
@@ -79,6 +82,9 @@ async fn main() -> Result<()> {
     match cli.command.unwrap() {
         Commands::Chat(args) => {
             commands::chat::run(args, &workspace_path, cli.yes, cli.verbose).await?
+        }
+        Commands::Build(args) => {
+            commands::build::run(args, &workspace_path).await?
         }
         Commands::Session(args) => commands::session::run(args).await?,
         Commands::Skills(args) => commands::skills::run(args).await?,

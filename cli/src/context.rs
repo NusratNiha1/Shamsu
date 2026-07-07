@@ -15,9 +15,9 @@ use crate::llm::{ChatMessage, LlmClient};
 use crate::storage;
 
 /// Rough token budget for the active (non-archived) window.
-/// Qwen-2.5-Coder supports 128K tokens, but we stay conservative so
-/// there is headroom for the response.
-const MAX_ACTIVE_TOKENS: usize = 12_000;
+/// With 32K context on the server we can afford a much larger window.
+/// We stay conservative at 20K to leave headroom for the response.
+const MAX_ACTIVE_TOKENS: usize = 20_000;
 
 /// Very rough approximation: 1 token ≈ 4 characters
 fn estimate_tokens(text: &str) -> usize {

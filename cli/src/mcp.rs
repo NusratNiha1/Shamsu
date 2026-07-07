@@ -139,6 +139,35 @@ pub struct ToolResult {
     pub output: String,
 }
 
+/// Resolve a path that might be relative (e.g. "src/App.js") to an absolute path
+/// using the workspace root from permissions. Absolute paths are returned as-is.
+fn resolve_path(path: &str, perms: &Permissions) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        path.to_string()
+    } else {
+        std::path::Path::new(&perms.workspace_root)
+            .join(path)
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
+/// Resolve all path-like fields in a tool args object.
+/// Handles: "path", "directory", "cwd" keys.
+fn resolve_args(args: &Value, perms: &Permissions) -> Value {
+    let mut out = args.clone();
+    for key in &["path", "directory"] {
+        if let Some(val) = args[*key].as_str() {
+            let resolved = resolve_path(val, perms);
+            out[*key] = serde_json::Value::String(resolved);
+        }
+    }
+    // Note: "cwd" is intentionally NOT resolved here — tool_run_shell handles
+    // it with its own defaulting logic (empty/".") → workspace_root.
+    out
+}
+
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 pub async fn call_tool(
@@ -147,6 +176,11 @@ pub async fn call_tool(
     permissions: &Permissions,
     auto_yes: bool,
 ) -> ToolResult {
+    // Resolve relative paths in args to absolute using workspace root.
+    // This silently fixes the model giving "src/App.js" instead of "/abs/path/src/App.js".
+    let resolved_args = resolve_args(args, permissions);
+    let args = &resolved_args;
+
     ui::print_tool_card(name, arg_summary(name, args).as_str(), ToolStatus::Running);
 
     let result = match name {
@@ -307,19 +341,40 @@ async fn tool_run_shell(args: &Value, perms: &Permissions, auto_yes: bool) -> Re
     perms.can_execute_shell()?;
 
     let command = str_arg(args, "command")?;
-    let cwd     = args["cwd"].as_str();
 
-    ui::print_shell_block(command, cwd);
+    // Always resolve cwd: use workspace_root as the default.
+    // Never let the model run commands in "." (the directory shamsu was launched from).
+    let cwd_raw = args["cwd"].as_str().unwrap_or("");
+    let effective_cwd = if cwd_raw.is_empty() || cwd_raw == "." || cwd_raw == "./" {
+        perms.workspace_root.clone()
+    } else {
+        // If the model gave a relative cwd, resolve it against workspace_root
+        let p = std::path::Path::new(cwd_raw);
+        if p.is_absolute() {
+            cwd_raw.to_string()
+        } else {
+            std::path::Path::new(&perms.workspace_root)
+                .join(cwd_raw)
+                .to_string_lossy()
+                .to_string()
+        }
+    };
+
+    ui::print_shell_block(command, Some(&effective_cwd));
 
     // Full profile = no prompt for shell either
     let needs_prompt = !auto_yes && perms.profile != PermissionProfile::Full;
-    if needs_prompt && !ui::prompt_permission("run_shell", command, cwd.map(|c| format!("cwd: {}", c)).as_deref()) {
+    if needs_prompt && !ui::prompt_permission("run_shell", command, Some(&format!("cwd: {}", effective_cwd))) {
         return Ok("[Skipped by user]".into());
     }
 
     if perms.dry_run {
-        return Ok(format!("[dry-run] Would run: {}", command));
+        return Ok(format!("[dry-run] Would run: {} (cwd: {})", command, effective_cwd));
     }
+
+    // Ensure the working directory exists before running
+    std::fs::create_dir_all(&effective_cwd)
+        .map_err(|e| anyhow!("Cannot create cwd '{}': {}", effective_cwd, e))?;
 
     let mut cmd = if cfg!(target_os = "windows") {
         let mut c = std::process::Command::new("cmd");
@@ -331,9 +386,7 @@ async fn tool_run_shell(args: &Value, perms: &Permissions, auto_yes: bool) -> Re
         c
     };
 
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
+    cmd.current_dir(&effective_cwd);
 
     let output = cmd.output()
         .map_err(|e| anyhow!("Failed to execute '{}': {}", command, e))?;
